@@ -1,31 +1,36 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from .. import models, schemas, database, auth
-from passlib.context import CryptContext
+from app import models, schemas
+from app.dependencies import get_db
+from passlib.context import CryptContext   # ← добавь эту строку в начало файла (если ещё нет)
 
-router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # ← добавь эту строку вне функций (лучше в начале файла)
+
+# ... другие импорты и роутер ...
+
+router = APIRouter(
+    prefix="/users",
+    tags=["Users"]
+)
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+@router.post("/", response_model=schemas.UserOut)
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
 
-@router.post("/register", response_model=schemas.UserOut)
-def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     hashed_password = pwd_context.hash(user.password)
-    db_user = models.User(username=user.username, password_hash=hashed_password)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
 
-@router.post("/login")
-def login(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
-    if not db_user or not pwd_context.verify(user.password, db_user.password_hash):
-        raise HTTPException(status_code=400, detail="Неверные данные")
-    token = auth.create_access_token({"sub": db_user.username})
-    return {"access_token": token, "token_type": "bearer"}
+    new_user = models.User(
+        username=user.username,
+        email=user.email,
+        hashed_password=hashed_password
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+   
